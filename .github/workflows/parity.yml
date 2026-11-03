@@ -17,7 +17,11 @@ permissions:
 
 jobs:
   parity:
-    runs-on: ubuntu-latest
+    # NOT ubuntu-latest: the runner image's glibc becomes the binary's floor,
+    # and a moving image silently raises it. Pinning to 22.04 keeps the floor at
+    # glibc 2.35, which runs on 22.04, 24.04 and every host we own. The guard
+    # below fails the build if anything drags the floor back up.
+    runs-on: ubuntu-22.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +45,21 @@ jobs:
         run: |
           set -o pipefail
           cargo build --release 2>&1 | tail -60
+
+      - name: Assert the glibc floor
+        # The whole point of pinning the runner is portability, and a floor is
+        # only real if something checks it. A symbol above 2.35 means the binary
+        # will not start on hosts we own, so fail here rather than at runtime.
+        run: |
+          set -euo pipefail
+          MAX=$(objdump -T target/release/render \
+                | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+          echo "required glibc floor: $MAX"
+          if [ "$(printf '%s\n2.35\n' "$MAX" | sort -V | tail -1)" != "2.35" ]; then
+            echo "::error::binary requires glibc $MAX, above the 2.35 floor"
+            exit 1
+          fi
+          echo "ok: runs on glibc >= 2.35"
 
       - name: Locate Chromium
         run: |
