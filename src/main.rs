@@ -178,22 +178,28 @@ async fn real_main() {
             }
             std::fs::create_dir_all(out_path).expect("create outdir");
             for (i, id) in ids.iter().enumerate() {
-                // Physical px, document-relative: the same box Playwright's
-                // `bounding_box()` reports, times the scale.
+                // `get_client_bounding_rect` reports document-relative CSS px; the
+                // painter's offsets and canvas are physical px. Scale both, or every
+                // clip comes out at 1/scale of the resolution a browser produces.
                 let rect = document
                     .get_client_bounding_rect(*id)
                     .unwrap_or_else(|| panic!("no geometry for {sel} #{i}"));
-                let x = rect.x.round() as u32;
-                let y = rect.y.round() as u32;
-                let w = (rect.width.round() as u32).max(1);
-                let h = (rect.height.round() as u32).max(1);
+                let s = scale as f64;
+                let x = (rect.x * s).round() as u32;
+                let y = (rect.y * s).round() as u32;
+                let w = ((rect.width * s).round() as u32).max(1);
+                let h = ((rect.height * s).round() as u32).max(1);
                 println!(
-                    "clip_{:02} x={} y={} w={:.2} h={:.2}",
+                    "clip_{:02} css x={:.2} y={:.2} w={:.2} h={:.2}  physical {}x{} at {},{}",
                     i + 1,
-                    x,
-                    y,
+                    rect.x,
+                    rect.y,
                     rect.width,
-                    rect.height
+                    rect.height,
+                    w,
+                    h,
+                    x,
+                    y
                 );
                 let buffer = paint_region(&mut document, x, y, w, h, scale);
                 let path = Path::new(out_path).join(format!("clip_{:02}.png", i + 1));
