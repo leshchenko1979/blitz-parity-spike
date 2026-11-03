@@ -17,6 +17,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -127,16 +128,76 @@ def chromium_render(chrome, html, out_png, w, h, scale, clip_selector=None, outd
     return written
 
 
+def image_regions(chrome, html, w, h, scale):
+    """Union of <img> boxes, in physical px, as Chromium lays them out.
+
+    Used as the mask for the appearance channel: photos and glyphs fail
+    differently (Vello decodes images exactly, but rasterises glyphs with its
+    own antialiasing), so scoring them together hides both signals.
+    """
+    from playwright.sync_api import sync_playwright
+
+    boxes = []
+    with sync_playwright() as p:
+        b = p.chromium.launch(
+            executable_path=chrome,
+            args=["--force-device-scale-factor=%d" % scale, "--font-render-hinting=none"],
+        )
+        pg = b.new_page(viewport={"width": w, "height": h}, device_scale_factor=scale)
+        pg.goto("file://" + os.path.abspath(html), wait_until="load")
+        pg.wait_for_timeout(1500)
+        raw = pg.evaluate("""() => Array.from(document.images).map(i => {
+            const r = i.getBoundingClientRect();
+            return [r.x + window.scrollX, r.y + window.scrollY, r.width, r.height];
+        })""")
+        b.close()
+    for x, y, iw, ih in raw:
+        boxes.append((int(x * scale), int(y * scale),
+                      int(iw * scale), int(ih * scale)))
+    return boxes
+
+def split_stats(a_path, b_path, regions):
+    """Pixel stats over two channels: inside the photo mask and outside it."""
+    a = Image.open(a_path).convert("RGBA")
+    b = Image.open(b_path).convert("RGBA")
+    if a.size != b.size:
+        return None
+    white = Image.new("RGBA", a.size, (255, 255, 255, 255))
+    a = Image.alpha_composite(white, a).convert("RGB")
+    b = Image.alpha_composite(white, b).convert("RGB")
+    diff = ImageChops.difference(a, b).convert("L")
+
+    mask = Image.new("L", a.size, 0)
+    from PIL import ImageDraw
+    d = ImageDraw.Draw(mask)
+    for x, y, w, h in regions:
+        d.rectangle([x, y, x + w - 1, y + h - 1], fill=255)
+
+    out = {}
+    for name, want in (("photo", 255), ("text", 0)):
+        sel = Image.eval(mask, (lambda v: 255 - v) if want == 0 else (lambda v: v))
+        hist = diff.histogram(sel)
+        total = sum(hist)
+        if not total:
+            out[name] = None
+            continue
+        out[name] = {
+            "mean": round(sum(i * n for i, n in enumerate(hist)) / total, 2),
+            "off_gt16_pct": round(100 * sum(hist[17:]) / total, 2),
+            "share_pct": round(100 * total / (a.size[0] * a.size[1]), 2),
+        }
+    return out
+
 # ------------------------------------------------------------------- gates
 
 
-def gate_a(binary, deck, runs, tmp):
-    print("\n== Gate A: determinism ==")
+def gate_a(binary, deck, runs, tmp, scale=2):
+    print("\n== Gate A: determinism (scale %d) ==" % scale)
     digests, walls, rsss = [], [], []
     for i in range(runs):
         out = os.path.join(tmp, "det_%02d.png" % i)
         rc, _, err, wall, rss = peak_rss(
-            [binary, deck, out, str(CSS_W), str(CSS_H), "1", "--document"]
+            [binary, deck, out, str(CSS_W), str(CSS_H), str(scale), "--document"]
         )
         if rc != 0:
             print("  render failed rc=%d\n%s" % (rc, err[-800:]))
@@ -226,22 +287,46 @@ def gate_c(binary, deck, chrome, tmp):
     if len(blitz_pngs) > 3:
         print("    ... (%d more)" % (len(blitz_pngs) - 3))
 
+    # Each slide's CSS origin, parsed back out of the CLI's own clip report, so the
+    # photo mask can be translated into slide-local coordinates.
+    origins = []
+    for ln in boxes:
+        m = re.search(r"css x=([-\d.]+) y=([-\d.]+)", ln)
+        origins.append((float(m.group(1)), float(m.group(2))) if m else None)
+
+    regions = image_regions(chrome, deck, CSS_W, CSS_H, 2)
+    print("  photo regions (Chromium <img> boxes, physical px): %d" % len(regions))
+
     rows, exact = [], 0
-    for bname, cname in zip(blitz_pngs, sorted(os.listdir(chrome_dir))):
+    for idx, (bname, cname) in enumerate(zip(blitz_pngs, sorted(os.listdir(chrome_dir)))):
         bp = os.path.join(blitz_dir, bname)
         cp = os.path.join(chrome_dir, cname)
         bs, cs = Image.open(bp).size, Image.open(cp).size
         st = pixel_stats(bp, cp) if bs == cs else None
+        split = None
+        if bs == cs and origins[idx]:
+            ox, oy = origins[idx]
+            local = [(ix - int(ox * 2), iy - int(oy * 2), iw, ih)
+                     for ix, iy, iw, ih in regions]
+            local = [(x, y, w, h) for x, y, w, h in local
+                     if x < bs[0] and y < bs[1] and x + w > 0 and y + h > 0]
+            split = split_stats(bp, cp, local) if local else None
         rows.append({"slide": bname, "blitz": bs, "chrome": cs,
-                     "size_match": bs == cs, "stats": st})
+                     "size_match": bs == cs, "stats": st, "split": split})
         if bs == cs:
             exact += 1
     for r in rows:
-        print("    %-12s blitz %-12s chrome %-12s %s%s" % (
+        extra = ""
+        if r["split"]:
+            ph, tx = r["split"]["photo"], r["split"]["text"]
+            extra = "  photo %s/%s%%  text %s/%s%%" % (
+                ph["mean"] if ph else "-", ph["off_gt16_pct"] if ph else "-",
+                tx["mean"] if tx else "-", tx["off_gt16_pct"] if tx else "-")
+        print("    %-12s blitz %-12s chrome %-12s %s%s%s" % (
             r["slide"], r["blitz"], r["chrome"],
             "size ok " if r["size_match"] else "SIZE MISMATCH ",
             ("mean %s off>16 %s%%" % (r["stats"]["mean"], r["stats"]["off_gt16_pct"]))
-            if r["stats"] else ""))
+            if r["stats"] else "", extra))
     ok = len(rows) > 0 and exact == len(rows) and len(blitz_pngs) == len(chrome_pngs)
     print("  %d/%d slides at Chromium's dimensions" % (exact, len(rows)))
     print("  clip wall %.2fs  peak rss %.1f MiB" % (wall, rss))
@@ -258,6 +343,7 @@ def main():
     ap.add_argument("--runs", type=int, default=10)
     ap.add_argument("--json", default=None, help="write results here")
     ap.add_argument("--only", default="abc", help="subset of gates, e.g. 'a'")
+    ap.add_argument("--scale", type=int, default=2, help="gate A scale (pipeline ships 2)")
     args = ap.parse_args()
 
     chrome = args.chromium
@@ -277,7 +363,7 @@ def main():
     out = {}
     try:
         if "a" in args.only:
-            out["A_determinism"] = gate_a(args.binary, args.deck, args.runs, tmp)
+            out["A_determinism"] = gate_a(args.binary, args.deck, args.runs, tmp, args.scale)
         if "b" in args.only:
             out["B_device_scale"] = gate_b(args.binary, args.deck, chrome, tmp)
         if "c" in args.only:
