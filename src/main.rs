@@ -64,14 +64,34 @@ async fn main() {
     );
     let parsed = started.elapsed();
 
-    // Drain any sub-resource fetches, then resolve style and layout. A local
-    // fixture has no sub-resources, so the loop runs once.
+    // Drain any sub-resource fetches, then resolve style and layout.
+    //
+    // `Provider::is_empty` counts Arc references to its waker, and the waker is
+    // cloned *inside* the spawned task, i.e. on its first poll. A fetch that has
+    // been queued but not yet polled therefore reads as "empty", so a single
+    // is_empty() check can exit before an image has even started loading: the
+    // paint then happens against a document whose images never arrived. Require
+    // several consecutive empty polls, yielding to the runtime in between, and
+    // bound the wait so a stalled fetch cannot hang the renderer.
     let layout_started = Instant::now();
+    let deadline = layout_started + std::time::Duration::from_secs(30);
+    let mut quiet = 0u32;
     loop {
         document.resolve(0.0);
         if net.is_empty() {
+            quiet += 1;
+            if quiet >= 4 {
+                break;
+            }
+        } else {
+            quiet = 0;
+        }
+        if Instant::now() > deadline {
+            eprintln!("warning: asset fetch deadline reached, painting anyway");
             break;
         }
+        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
     }
     let laid_out = layout_started.elapsed();
 
