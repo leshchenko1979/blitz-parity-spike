@@ -1,11 +1,19 @@
-//! Render one HTML fragment to a PNG at a fixed viewport.
+//! Render HTML to PNG at a fixed viewport, with optional device-scale and
+//! per-element clipping, so Blitz can be measured against Chromium the way the
+//! deck pipeline actually uses it.
 //!
-//! The document wrapper, the viewport and the canvas are kept byte-for-byte in
-//! step with the ogre parity harness (`test/chromium/browser.go`), so the PNG
-//! this produces can be measured by the same instrument as a browser screenshot
-//! and the two numbers compared directly.
+//! Usage:
+//!   render <html> <out.png> <width> <height> [scale] [--document]
+//!   render --clip <html> <outdir> <width> <height> <scale> <selector> [--document]
 //!
-//! Usage: render <html-file> <out.png> <width> <height>
+//! `--document` renders the file as a complete document (no injected reset, no
+//! body wrapper). Without it the file is treated as a fragment and wrapped in
+//! the same reset the ogre parity harness uses, so both engines see identical
+//! markup.
+//!
+//! Clip mode mirrors Playwright's `locator(...).screenshot()`: every match of
+//! `selector` is painted into its own PNG at the element's border box, in
+//! physical pixels (CSS box x scale).
 
 use std::env;
 use std::fs::File;
@@ -23,34 +31,88 @@ use blitz_traits::shell::{ColorScheme, Viewport};
 use peniko::kurbo::Rect;
 use peniko::Fill;
 
-// The net provider spawns a tokio task for every sub-resource fetch, so main
-// must run inside a runtime. Without this, any document with an <img> aborts
-// with `there is no reactor running` before layout starts.
-#[tokio::main]
-async fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 5 {
-        eprintln!("usage: render <html-file> <out.png> <width> <height>");
-        std::process::exit(2);
-    }
-    let html_path = Path::new(&args[1]);
-    let out_path = &args[2];
-    let width: u32 = args[3].parse().expect("width must be a number");
-    let height: u32 = args[4].parse().expect("height must be a number");
+fn main() {
+    // The net provider spawns a tokio task for every sub-resource fetch, so the
+    // document has to be driven from inside a runtime. Without this, any
+    // document with an <img> aborts with `there is no reactor running` before
+    // layout starts.
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime")
+        .block_on(real_main());
+}
 
-    let body = std::fs::read_to_string(html_path).expect("read fixture");
-    let doc_html = format!(
-        "<html><head><style>html,body{{margin:0;padding:0;background:#ffffff;}}</style></head><body>{body}</body></html>"
-    );
+async fn real_main() {
+    let args: Vec<String> = env::args().collect();
+    let clip = args.get(1).map(|a| a == "--clip").unwrap_or(false);
+    let as_document = args.iter().any(|a| a == "--document");
+
+    // Positional args start after the program name, plus the `--clip` marker.
+    let pos: Vec<&String> = args
+        .iter()
+        .skip(if clip { 2 } else { 1 })
+        .filter(|a| !a.starts_with("--"))
+        .collect();
+
+    let usage = if clip {
+        "usage: render --clip <html> <outdir> <width> <height> <scale> <selector> [--document]"
+    } else {
+        "usage: render <html> <out.png> <width> <height> [scale] [--document]"
+    };
+
+    let (html_path, out_path, width, height, scale, selector) = if clip {
+        if pos.len() < 6 {
+            eprintln!("{usage}");
+            std::process::exit(2);
+        }
+        (
+            pos[0].as_str(),
+            pos[1].as_str(),
+            pos[2].parse::<u32>().expect("width"),
+            pos[3].parse::<u32>().expect("height"),
+            pos[4].parse::<f32>().expect("scale"),
+            Some(pos[5].as_str()),
+        )
+    } else {
+        if pos.len() < 4 {
+            eprintln!("{usage}");
+            std::process::exit(2);
+        }
+        (
+            pos[0].as_str(),
+            pos[1].as_str(),
+            pos[2].parse::<u32>().expect("width"),
+            pos[3].parse::<u32>().expect("height"),
+            pos.get(4)
+                .map(|s| s.parse::<f32>().expect("scale"))
+                .unwrap_or(1.0),
+            None,
+        )
+    };
+
+    let started = Instant::now();
+    let source = std::fs::read_to_string(html_path).expect("read html");
+    let doc_html = if as_document {
+        source
+    } else {
+        format!(
+            "<html><head><style>html,body{{margin:0;padding:0;background:#ffffff;}}</style></head><body>{source}</body></html>"
+        )
+    };
     let base_url = format!(
         "file://{}",
-        html_path
+        Path::new(html_path)
             .canonicalize()
-            .expect("canonicalize fixture path")
+            .expect("canonicalize path")
             .display()
     );
 
-    let started = Instant::now();
+    // The viewport is physical pixels: Blitz divides window_size by the scale to
+    // get the CSS viewport, which is how device_scale_factor behaves in a
+    // browser (1280x720 CSS at scale 2 => 2560x1440 physical).
+    let phys_w = (width as f32 * scale).round() as u32;
+    let phys_h = (height as f32 * scale).round() as u32;
 
     let net = Arc::new(Provider::new(None));
     let mut document = HtmlDocument::from_html(
@@ -58,7 +120,7 @@ async fn main() {
         DocumentConfig {
             base_url: Some(base_url),
             net_provider: Some(Arc::clone(&net) as _),
-            viewport: Some(Viewport::new(width, height, 1.0, ColorScheme::Light)),
+            viewport: Some(Viewport::new(phys_w, phys_h, scale, ColorScheme::Light)),
             ..Default::default()
         },
     );
@@ -74,7 +136,7 @@ async fn main() {
     // several consecutive empty polls, yielding to the runtime in between, and
     // bound the wait so a stalled fetch cannot hang the renderer.
     let layout_started = Instant::now();
-    let deadline = layout_started + std::time::Duration::from_secs(30);
+    let deadline = layout_started + std::time::Duration::from_secs(120);
     let mut quiet = 0u32;
     loop {
         document.resolve(0.0);
@@ -96,32 +158,85 @@ async fn main() {
     let laid_out = layout_started.elapsed();
 
     let paint_started = Instant::now();
-    let buffer = render_to_buffer::<VelloCpuImageRenderer, _>(
+    match selector {
+        None => {
+            let buffer = paint_region(&mut document, 0, 0, phys_w, phys_h, scale);
+            write_png(
+                File::create(out_path).expect("create png"),
+                &buffer,
+                phys_w,
+                phys_h,
+            );
+        }
+        Some(sel) => {
+            let ids = document
+                .query_selector_all(sel)
+                .unwrap_or_else(|e| panic!("bad selector {sel:?}: {e:?}"));
+            if ids.is_empty() {
+                eprintln!("no match for selector {sel:?}");
+                std::process::exit(3);
+            }
+            std::fs::create_dir_all(out_path).expect("create outdir");
+            for (i, id) in ids.iter().enumerate() {
+                // Physical px, document-relative: the same box Playwright's
+                // `bounding_box()` reports, times the scale.
+                let rect = document
+                    .get_client_bounding_rect(*id)
+                    .unwrap_or_else(|| panic!("no geometry for {sel} #{i}"));
+                let x = rect.x.round() as u32;
+                let y = rect.y.round() as u32;
+                let w = (rect.width.round() as u32).max(1);
+                let h = (rect.height.round() as u32).max(1);
+                println!(
+                    "clip_{:02} x={} y={} w={:.2} h={:.2}",
+                    i + 1,
+                    x,
+                    y,
+                    rect.width,
+                    rect.height
+                );
+                let buffer = paint_region(&mut document, x, y, w, h, scale);
+                let path = Path::new(out_path).join(format!("clip_{:02}.png", i + 1));
+                write_png(File::create(&path).expect("create png"), &buffer, w, h);
+            }
+        }
+    }
+    let painted = paint_started.elapsed();
+
+    eprintln!(
+        "TIMING parse_ms={} layout_ms={} paint_ms={} total_ms={} scale={}",
+        parsed.as_millis(),
+        laid_out.as_millis(),
+        painted.as_millis(),
+        started.elapsed().as_millis(),
+        scale
+    );
+}
+
+/// Paint a `w`x`h` physical-pixel region whose top-left is at (`x`, `y`) in
+/// document coordinates.
+fn paint_region(
+    document: &mut HtmlDocument,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    scale: f32,
+) -> Vec<u8> {
+    render_to_buffer::<VelloCpuImageRenderer, _>(
         |scene| {
             scene.fill(
                 Fill::NonZero,
                 Default::default(),
                 Color::WHITE,
                 Default::default(),
-                &Rect::new(0.0, 0.0, width as f64, height as f64),
+                &Rect::new(0.0, 0.0, w as f64, h as f64),
             );
-            paint_scene(scene, document.as_mut(), 1.0, width, height, 0, 0);
+            paint_scene(scene, document.as_mut(), scale as f64, w, h, x, y);
         },
-        width,
-        height,
-    );
-    let painted = paint_started.elapsed();
-
-    let file = File::create(out_path).expect("create png");
-    write_png(file, &buffer, width, height);
-
-    eprintln!(
-        "TIMING parse_ms={} layout_ms={} paint_ms={} total_ms={}",
-        parsed.as_millis(),
-        laid_out.as_millis(),
-        painted.as_millis(),
-        started.elapsed().as_millis()
-    );
+        w,
+        h,
+    )
 }
 
 fn write_png<W: std::io::Write>(writer: W, buffer: &[u8], width: u32, height: u32) {
