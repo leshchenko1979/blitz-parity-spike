@@ -205,7 +205,7 @@ async fn real_main() {
                 for (i, rect) in rects.iter().enumerate() {
                     let w = (((rect.width * s).round() as u32).max(1));
                     let h = (((rect.height * s).round() as u32).max(1));
-                    document.set_viewport_scroll(Point::new(rect.x, rect.y));
+                    document.set_viewport_scroll(Point { x: rect.x, y: rect.y });
                     let buffer = paint_region(&mut document, 0, 0, w, h, scale);
                     println!(
                         "clip_{:02} css x={:.2} y={:.2} w={:.2} h={:.2}  physical {}x{} (scroll)",
@@ -220,7 +220,7 @@ async fn real_main() {
                     let path = Path::new(out_path).join(format!("clip_{:02}.png", i + 1));
                     write_png(File::create(&path).expect("create png"), &buffer, w, h);
                 }
-                document.set_viewport_scroll(Point::new(0.0, 0.0));
+                document.set_viewport_scroll(Point::ZERO);
             } else {
                 // Paint ONE full-height canvas at zero offset and crop each element out
                 // of it, rather than painting one region per element.
