@@ -178,15 +178,17 @@ async fn real_main() {
             }
             std::fs::create_dir_all(out_path).expect("create outdir");
             for (i, id) in ids.iter().enumerate() {
-                // `get_client_bounding_rect` reports document-relative CSS px; the
-                // painter's offsets and canvas are physical px. Scale both, or every
-                // clip comes out at 1/scale of the resolution a browser produces.
+                // Two different units meet here, and swapping them fails silently:
+                //   * `get_client_bounding_rect` and the painter's node coordinates are
+                //     CSS px, so the OFFSET must stay CSS px or the region is culled;
+                //   * the canvas and the emitted PNG are physical px, so the SIZE must
+                //     be scaled or the slide comes out at 1/scale of a browser's.
                 let rect = document
                     .get_client_bounding_rect(*id)
                     .unwrap_or_else(|| panic!("no geometry for {sel} #{i}"));
                 let s = scale as f64;
-                let x = (rect.x * s).round() as u32;
-                let y = (rect.y * s).round() as u32;
+                let x = rect.x.round() as u32;
+                let y = rect.y.round() as u32;
                 let w = ((rect.width * s).round() as u32).max(1);
                 let h = ((rect.height * s).round() as u32).max(1);
                 println!(
