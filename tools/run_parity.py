@@ -124,6 +124,10 @@ def main():
     ap.add_argument("--blitz", default=os.path.join(ROOT, "target", "release", "render"))
     ap.add_argument("--chrome", default=None)
     ap.add_argument("--bench-repeats", type=int, default=5)
+    # A third engine for the KPI table only. Parity rows stay Blitz-vs-Chromium;
+    # this exists so ogre's cost can be quoted from the SAME machine as Blitz's,
+    # because a number measured on a different host is not a comparison.
+    ap.add_argument("--ogre", default=None, help="ogre binary, for the KPI table")
     args = ap.parse_args()
 
     chrome = find_chrome(args.chrome)
@@ -265,14 +269,20 @@ def benchmark(args, chrome, fixtures):
     page = os.path.join(tmp, "page.html")
     open(page, "w").write(WRAPPER.format(open(src).read()))
 
-    engines = {
+    engines = {}
+    if args.ogre:
+        engines["ogre"] = [
+            args.ogre, "--render", page, "--format", "png",
+            "--output", os.path.join(tmp, "o.png"), "--width", str(w), "--height", str(h),
+        ]
+    engines.update({
         "blitz": [
             args.blitz, src, os.path.join(tmp, "b.png"), str(w), str(h)
         ],
         "chromium": [chrome]
         + CHROME_FLAGS
         + [f"--window-size={w},{h}", f"--screenshot={os.path.join(tmp, 'c.png')}", f"file://{page}"],
-    }
+    })
 
     print()
     print(f"KPI ({fixture['name']} at {w}x{h}, {args.bench_repeats} runs, median)")

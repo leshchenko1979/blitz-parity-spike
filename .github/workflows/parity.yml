@@ -51,8 +51,21 @@ jobs:
             echo "CHROME=$(find ~/.cache/ms-playwright -name chrome -type f | head -1)" >> "$GITHUB_ENV"
           fi
 
+      - name: Fetch ogre (same-regime baseline)
+        # Blitz and Chromium are both measured on this runner. ogre is fetched
+        # too, so its cost is quoted from the SAME machine: a figure taken on a
+        # different host is not a comparison.
+        run: |
+          set -euo pipefail
+          V=v3.4.6
+          curl -fsSL -o ogre.tar.gz \
+            "https://github.com/leshchenko1979/ogre/releases/download/$V/ogre_${V#v}_linux_amd64.tar.gz"
+          tar xzf ogre.tar.gz ogre
+          chmod +x ogre
+          ./ogre --help >/dev/null && echo "ogre baseline ready"
+
       - name: Measure
-        run: python3 tools/run_parity.py
+        run: python3 tools/run_parity.py --ogre ./ogre
 
       - name: Upload results
         if: always()
