@@ -1,0 +1,56 @@
+name: parity
+
+# Measures Blitz's CSS geometry against Chromium on the ogre parity corpus.
+#
+# The box this spike was written on runs `cargo` as a shim that refuses to
+# compile (host policy), so the build lives here. Everything the job measures is
+# reproducible: pinned Blitz crates, pinned fixtures, one instrument for both
+# engines, and the numbers land as an artifact.
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build the Blitz renderer
+        shell: bash
+        # pipefail, so a failed build is not masked by the tail's exit status.
+        run: |
+          set -o pipefail
+          cargo build --release 2>&1 | tail -60
+
+      - name: Locate Chromium
+        run: |
+          if command -v google-chrome >/dev/null; then
+            google-chrome --version
+          else
+            npx --yes playwright install --with-deps chromium
+            echo "CHROME=$(find ~/.cache/ms-playwright -name chrome -type f | head -1)" >> "$GITHUB_ENV"
+          fi
+
+      - name: Measure
+        run: python3 tools/run_parity.py
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-results
+          path: out/
+          if-no-files-found: warn
