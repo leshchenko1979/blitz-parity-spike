@@ -23,7 +23,7 @@ use std::time::Instant;
 
 use anyrender::{render_to_buffer, PaintScene as _};
 use anyrender_vello_cpu::VelloCpuImageRenderer;
-use blitz_dom::{util::Color, Document as _, DocumentConfig};
+use blitz_dom::{util::Color, Document as _, DocumentConfig, Point};
 use blitz_html::HtmlDocument;
 use blitz_net::Provider;
 use blitz_paint::paint_scene;
@@ -47,6 +47,10 @@ async fn real_main() {
     let args: Vec<String> = env::args().collect();
     let clip = args.get(1).map(|a| a == "--clip").unwrap_or(false);
     let as_document = args.iter().any(|a| a == "--document");
+    // Clip mode: paint one element-sized canvas per match, with the viewport
+    // scrolled to that element, instead of one full-height canvas that is
+    // cropped afterwards. Same pixels, a fraction of the peak memory.
+    let use_scroll = args.iter().any(|a| a == "--scroll");
 
     // Positional args start after the program name, plus the `--clip` marker.
     let pos: Vec<&String> = args
@@ -190,51 +194,80 @@ async fn real_main() {
                 })
                 .collect();
 
-            // Paint ONE full-height canvas at zero offset and crop each element out
-            // of it, rather than painting one region per element.
-            //
-            // Two reasons, both measured on the real deck:
-            //   * the viewport must stay at the requested size, because `vh` units
-            //     resolve against it — enlarging it to the document height would
-            //     relayout the page (the deck has 3 `vh` uses);
-            //   * a non-zero paint offset is not reliable for replaced content: with
-            //     the offset set, slides whose photos sit below the first viewport
-            //     lost them, while the same slides were exact when cropped from a
-            //     full-document render.
-            //
-            // The canvas is physical px; the element boxes are CSS px.
-            let doc_phys_h = rects
-                .iter()
-                .map(|r| ((r.y + r.height) * s).round() as u32)
-                .max()
-                .unwrap_or(phys_h)
-                .max(phys_h);
-            let canvas = paint_region(&mut document, 0, 0, phys_w, doc_phys_h, scale);
-
-            for (i, rect) in rects.iter().enumerate() {
-                let x = ((rect.x * s).round() as u32).min(phys_w.saturating_sub(1));
-                let y = ((rect.y * s).round() as u32).min(doc_phys_h.saturating_sub(1));
-                let w = (((rect.width * s).round() as u32).max(1)).min(phys_w - x);
-                let h = (((rect.height * s).round() as u32).max(1)).min(doc_phys_h - y);
-                println!(
-                    "clip_{:02} css x={:.2} y={:.2} w={:.2} h={:.2}  physical {}x{} at {},{}",
-                    i + 1,
-                    rect.x,
-                    rect.y,
-                    rect.width,
-                    rect.height,
-                    w,
-                    h,
-                    x,
-                    y
-                );
-                let mut out = Vec::with_capacity((w * h * 4) as usize);
-                for row in 0..h {
-                    let start = (((y + row) * phys_w + x) * 4) as usize;
-                    out.extend_from_slice(&canvas[start..start + (w * 4) as usize]);
+            if use_scroll {
+                // One canvas per element, sized to the element, painted at zero
+                // offset with the viewport scrolled to the element's top-left.
+                //
+                // `set_viewport_scroll` is a PAINT-time offset (`origin =
+                // root_pos - viewport_scroll`), not a layout input, so the
+                // document is laid out exactly once and `vh` units still
+                // resolve against the requested viewport.
+                for (i, rect) in rects.iter().enumerate() {
+                    let w = (((rect.width * s).round() as u32).max(1));
+                    let h = (((rect.height * s).round() as u32).max(1));
+                    document.set_viewport_scroll(Point::new(rect.x, rect.y));
+                    let buffer = paint_region(&mut document, 0, 0, w, h, scale);
+                    println!(
+                        "clip_{:02} css x={:.2} y={:.2} w={:.2} h={:.2}  physical {}x{} (scroll)",
+                        i + 1,
+                        rect.x,
+                        rect.y,
+                        rect.width,
+                        rect.height,
+                        w,
+                        h
+                    );
+                    let path = Path::new(out_path).join(format!("clip_{:02}.png", i + 1));
+                    write_png(File::create(&path).expect("create png"), &buffer, w, h);
                 }
-                let path = Path::new(out_path).join(format!("clip_{:02}.png", i + 1));
-                write_png(File::create(&path).expect("create png"), &out, w, h);
+                document.set_viewport_scroll(Point::new(0.0, 0.0));
+            } else {
+                // Paint ONE full-height canvas at zero offset and crop each element out
+                // of it, rather than painting one region per element.
+                //
+                // Two reasons, both measured on the real deck:
+                //   * the viewport must stay at the requested size, because `vh` units
+                //     resolve against it — enlarging it to the document height would
+                //     relayout the page (the deck has 3 `vh` uses);
+                //   * a non-zero paint offset is not reliable for replaced content: with
+                //     the offset set, slides whose photos sit below the first viewport
+                //     lost them, while the same slides were exact when cropped from a
+                //     full-document render.
+                //
+                // The canvas is physical px; the element boxes are CSS px.
+                let doc_phys_h = rects
+                    .iter()
+                    .map(|r| ((r.y + r.height) * s).round() as u32)
+                    .max()
+                    .unwrap_or(phys_h)
+                    .max(phys_h);
+                let canvas = paint_region(&mut document, 0, 0, phys_w, doc_phys_h, scale);
+
+                for (i, rect) in rects.iter().enumerate() {
+                    let x = ((rect.x * s).round() as u32).min(phys_w.saturating_sub(1));
+                    let y = ((rect.y * s).round() as u32).min(doc_phys_h.saturating_sub(1));
+                    let w = (((rect.width * s).round() as u32).max(1)).min(phys_w - x);
+                    let h = (((rect.height * s).round() as u32).max(1)).min(doc_phys_h - y);
+                    println!(
+                        "clip_{:02} css x={:.2} y={:.2} w={:.2} h={:.2}  physical {}x{} at {},{}",
+                        i + 1,
+                        rect.x,
+                        rect.y,
+                        rect.width,
+                        rect.height,
+                        w,
+                        h,
+                        x,
+                        y
+                    );
+                    let mut out = Vec::with_capacity((w * h * 4) as usize);
+                    for row in 0..h {
+                        let start = (((y + row) * phys_w + x) * 4) as usize;
+                        out.extend_from_slice(&canvas[start..start + (w * 4) as usize]);
+                    }
+                    let path = Path::new(out_path).join(format!("clip_{:02}.png", i + 1));
+                    write_png(File::create(&path).expect("create png"), &out, w, h);
+                }
             }
         }
     }
