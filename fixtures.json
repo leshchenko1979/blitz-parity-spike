@@ -201,5 +201,12 @@
     "width": 400,
     "height": 100,
     "text": false
+  },
+  {
+    "name": "cascade",
+    "file": "cascade.html",
+    "width": 400,
+    "height": 200,
+    "text": false
   }
 ]

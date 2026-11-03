@@ -67,6 +67,14 @@ jobs:
       - name: Measure
         run: python3 tools/run_parity.py --ogre ./ogre
 
+      - name: Upload the built renderer
+        # So the binary can be run on documents that must not be committed.
+        uses: actions/upload-artifact@v4
+        with:
+          name: blitz-render
+          path: target/release/render
+          if-no-files-found: error
+
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4

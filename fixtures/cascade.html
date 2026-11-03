@@ -1,0 +1,20 @@
+<html><head><style>
+:root { --ink:#101010; --accent:#ff0000; }
+html, body { margin:0; padding:0; background:#ffffff; }
+.deck { width:400px; height:200px; background:#ffffff; font-size:0; line-height:0; }
+.slide { width:400px; height:200px; position:relative; }
+.slide .panel { position:absolute; top:0; left:0; width:120px; height:200px; background:var(--accent); }
+.slide .body { position:absolute; top:20px; left:140px; width:200px; height:60px; background:#00ff00; }
+.slide .foot { position:absolute; bottom:0; left:140px; width:200px; height:40px; background:#0000ff; }
+.slide .tag { position:absolute; top:100px; left:140px; width:40px; height:40px; background:#ffff00; }
+.slide + .slide .panel { background:#00ffff; }
+</style></head><body>
+<div class="deck">
+  <div class="slide">
+    <div class="panel"></div>
+    <div class="body"></div>
+    <div class="foot"></div>
+    <div class="tag"></div>
+  </div>
+</div>
+</body></html>
