@@ -177,20 +177,45 @@ async fn real_main() {
                 std::process::exit(3);
             }
             std::fs::create_dir_all(out_path).expect("create outdir");
-            for (i, id) in ids.iter().enumerate() {
-                // Two different units meet here, and swapping them fails silently:
-                //   * `get_client_bounding_rect` and the painter's node coordinates are
-                //     CSS px, so the OFFSET must stay CSS px or the region is culled;
-                //   * the canvas and the emitted PNG are physical px, so the SIZE must
-                //     be scaled or the slide comes out at 1/scale of a browser's.
-                let rect = document
-                    .get_client_bounding_rect(*id)
-                    .unwrap_or_else(|| panic!("no geometry for {sel} #{i}"));
-                let s = scale as f64;
-                let x = rect.x.round() as u32;
-                let y = rect.y.round() as u32;
-                let w = ((rect.width * s).round() as u32).max(1);
-                let h = ((rect.height * s).round() as u32).max(1);
+            let s = scale as f64;
+
+            // Every matched element's box, in document coordinates, at scroll 0.
+            let rects: Vec<_> = ids
+                .iter()
+                .enumerate()
+                .map(|(i, id)| {
+                    document
+                        .get_client_bounding_rect(*id)
+                        .unwrap_or_else(|| panic!("no geometry for {sel} #{i}"))
+                })
+                .collect();
+
+            // Paint ONE full-height canvas at zero offset and crop each element out
+            // of it, rather than painting one region per element.
+            //
+            // Two reasons, both measured on the real deck:
+            //   * the viewport must stay at the requested size, because `vh` units
+            //     resolve against it — enlarging it to the document height would
+            //     relayout the page (the deck has 3 `vh` uses);
+            //   * a non-zero paint offset is not reliable for replaced content: with
+            //     the offset set, slides whose photos sit below the first viewport
+            //     lost them, while the same slides were exact when cropped from a
+            //     full-document render.
+            //
+            // The canvas is physical px; the element boxes are CSS px.
+            let doc_phys_h = rects
+                .iter()
+                .map(|r| ((r.y + r.height) * s).round() as u32)
+                .max()
+                .unwrap_or(phys_h)
+                .max(phys_h);
+            let canvas = paint_region(&mut document, 0, 0, phys_w, doc_phys_h, scale);
+
+            for (i, rect) in rects.iter().enumerate() {
+                let x = ((rect.x * s).round() as u32).min(phys_w.saturating_sub(1));
+                let y = ((rect.y * s).round() as u32).min(doc_phys_h.saturating_sub(1));
+                let w = (((rect.width * s).round() as u32).max(1)).min(phys_w - x);
+                let h = (((rect.height * s).round() as u32).max(1)).min(doc_phys_h - y);
                 println!(
                     "clip_{:02} css x={:.2} y={:.2} w={:.2} h={:.2}  physical {}x{} at {},{}",
                     i + 1,
@@ -203,9 +228,13 @@ async fn real_main() {
                     x,
                     y
                 );
-                let buffer = paint_region(&mut document, x, y, w, h, scale);
+                let mut out = Vec::with_capacity((w * h * 4) as usize);
+                for row in 0..h {
+                    let start = (((y + row) * phys_w + x) * 4) as usize;
+                    out.extend_from_slice(&canvas[start..start + (w * 4) as usize]);
+                }
                 let path = Path::new(out_path).join(format!("clip_{:02}.png", i + 1));
-                write_png(File::create(&path).expect("create png"), &buffer, w, h);
+                write_png(File::create(&path).expect("create png"), &out, w, h);
             }
         }
     }
