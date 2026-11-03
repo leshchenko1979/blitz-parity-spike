@@ -23,7 +23,11 @@ use blitz_traits::shell::{ColorScheme, Viewport};
 use peniko::kurbo::Rect;
 use peniko::Fill;
 
-fn main() {
+// The net provider spawns a tokio task for every sub-resource fetch, so main
+// must run inside a runtime. Without this, any document with an <img> aborts
+// with `there is no reactor running` before layout starts.
+#[tokio::main]
+async fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 5 {
         eprintln!("usage: render <html-file> <out.png> <width> <height>");

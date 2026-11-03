@@ -208,5 +208,12 @@
     "width": 400,
     "height": 200,
     "text": false
+  },
+  {
+    "name": "image-data-uri",
+    "file": "image-data-uri.html",
+    "width": 300,
+    "height": 200,
+    "text": false
   }
 ]

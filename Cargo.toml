@@ -21,6 +21,8 @@ anyrender = "0.14"
 anyrender_vello_cpu = "0.18"
 peniko = "0.6"
 png = "0.18"
+# Needed because blitz-net spawns a tokio task per sub-resource fetch.
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [profile.release]
 opt-level = 3
