@@ -28,6 +28,13 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Install system dependencies
+        # Blitz's font stack links fontconfig; the runner image does not ship
+        # the development headers.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pkg-config libfontconfig1-dev libfreetype6-dev
+
       - name: Build the Blitz renderer
         shell: bash
         # pipefail, so a failed build is not masked by the tail's exit status.
