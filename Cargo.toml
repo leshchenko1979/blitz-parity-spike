@@ -26,3 +26,13 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 
 [profile.release]
 opt-level = 3
+
+# Temporary: measure the corpus against the trailing-<br> patch instead of the
+# published crate, so the fixture that found the defect is the fixture that
+# confirms the fix. Removed once the patch lands upstream.
+[patch.crates-io]
+blitz-html = { git = "https://github.com/leshchenko1979/blitz", branch = "fix/trailing-br-line-box" }
+blitz-dom = { git = "https://github.com/leshchenko1979/blitz", branch = "fix/trailing-br-line-box" }
+blitz-net = { git = "https://github.com/leshchenko1979/blitz", branch = "fix/trailing-br-line-box" }
+blitz-paint = { git = "https://github.com/leshchenko1979/blitz", branch = "fix/trailing-br-line-box" }
+blitz-traits = { git = "https://github.com/leshchenko1979/blitz", branch = "fix/trailing-br-line-box" }
