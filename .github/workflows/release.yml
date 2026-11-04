@@ -143,7 +143,10 @@ jobs:
           echo "built:   $BUILT"
           echo "fetched: $FETCHED"
           [ "$BUILT" = "$FETCHED" ] || { echo "::error::published asset differs from the build"; exit 1; }
-          ./blitz-render --help | head -3
+          # `--help` is not a flag: the CLI prints usage and exits 2, which
+          # `pipefail` would turn into a failed step. The render below is the
+          # real liveness check, so tolerate the usage exit.
+          ./blitz-render --help 2>&1 | head -3 || true
           printf '<html><body style="margin:0"><div style="width:20px;height:10px;background:#f00"></div></body></html>' > t.html
           ./blitz-render t.html t.png 20 10 1 --document
           # Assert the IHDR dimensions, not a file-size floor: a 20x10 solid
