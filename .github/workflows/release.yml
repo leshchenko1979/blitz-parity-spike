@@ -121,3 +121,31 @@ jobs:
             --title "$VERSION" \
             --notes "$NOTES" \
             --verify-tag
+
+      - name: Verify the published asset
+        # A release is a claim that this URL serves the binary we built. Download
+        # it back over HTTPS and prove it: checksum against the published
+        # checksums.txt, byte-compare with the build, then run it.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION='${{ steps.pkg.outputs.version }}'
+          NAME='${{ steps.pkg.outputs.name }}'
+          BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION"
+          rm -rf verify && mkdir verify && cd verify
+          curl -fsSL -O "$BASE/${NAME}.tar.gz"
+          curl -fsSL -O "$BASE/checksums.txt"
+          sha256sum -c checksums.txt
+          tar xzf "${NAME}.tar.gz"
+          BUILT=$(md5sum "../dist/blitz-render" | cut -d' ' -f1)
+          FETCHED=$(md5sum blitz-render | cut -d' ' -f1)
+          echo "built:   $BUILT"
+          echo "fetched: $FETCHED"
+          [ "$BUILT" = "$FETCHED" ] || { echo "::error::published asset differs from the build"; exit 1; }
+          ./blitz-render --help | head -3
+          printf '<html><body style="margin:0"><div style="width:20px;height:10px;background:#f00"></div></body></html>' > t.html
+          ./blitz-render t.html t.png 20 10 1 --document
+          # Assert the IHDR dimensions, not a file-size floor: a 20x10 solid
+          # colour legitimately compresses to 93 bytes.
+          python3 -c "import struct;d=open('t.png','rb').read();assert d[:8]==b'\x89PNG\r\n\x1a\n','not a PNG';w,h=struct.unpack('>II',d[16:24]);assert (w,h)==(20,10),(w,h);print('renders: ok',w,'x',h,len(d),'bytes')"
