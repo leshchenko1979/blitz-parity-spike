@@ -1,0 +1,123 @@
+name: release
+
+# Publishes the Blitz renderer as a GitHub Release asset, so the deck pipeline
+# installs from a versioned URL with a checksum instead of a CI artifact that
+# expires and cannot be verified by anyone else.
+#
+#   curl -fsSL -O https://github.com/leshchenko1979/blitz-parity-spike/releases/download/vX/blitz-render_X_linux_amd64.tar.gz
+#
+# Triggered by a version tag only: the artifact is a binary, and a binary that
+# silently changes under a fixed URL is not pinnable.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (must already exist)"
+        required: true
+
+permissions:
+  contents: write # gh release create
+
+jobs:
+  release:
+    # NOT ubuntu-latest: the runner image's glibc becomes the binary's floor.
+    # Pinning to 22.04 keeps it at 2.35; the guard below fails the build if
+    # anything drags it back up.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pkg-config libfontconfig1-dev libfreetype6-dev
+
+      - name: Build the Blitz renderer
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build --release 2>&1 | tail -60
+
+      - name: Assert the glibc floor
+        # A floor is only real if something checks it. A symbol above 2.35 means
+        # the binary will not start on hosts we own, so fail here, not at runtime
+        # on the box that needs it.
+        run: |
+          set -euo pipefail
+          MAX=$(objdump -T target/release/render \
+                | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+          echo "required glibc floor: $MAX"
+          if [ "$(printf '%s\n2.35\n' "$MAX" | sort -V | tail -1)" != "2.35" ]; then
+            echo "::error::binary requires glibc $MAX, above the 2.35 floor"
+            exit 1
+          fi
+          echo "ok: runs on glibc >= 2.35"
+
+      - name: Package
+        id: pkg
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
+          [ -n "$VERSION" ] || { echo "::error::no tag"; exit 1; }
+          NAME="blitz-render_${VERSION#v}_linux_amd64"
+          mkdir -p dist
+          cp target/release/render dist/blitz-render
+          chmod 755 dist/blitz-render
+          tar -C dist -czf "dist/${NAME}.tar.gz" blitz-render
+          # The tarball is what gets downloaded, so the checksum is of the tarball.
+          ( cd dist && sha256sum "${NAME}.tar.gz" > checksums.txt )
+          cat dist/checksums.txt
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION='${{ steps.pkg.outputs.version }}'
+          NAME='${{ steps.pkg.outputs.name }}'
+          NOTES=$(cat <<EOF
+          Static Blitz renderer CLI, built from \`${{ github.sha }}\`.
+
+          | | |
+          |---|---|
+          | Asset | \`${NAME}.tar.gz\` |
+          | Binary | \`blitz-render\` (single file, no runtime deps) |
+          | glibc floor | 2.35 (asserted at build time) |
+          | Built on | ubuntu-22.04 |
+          | Blitz pin | see \`Cargo.toml\` at this tag |
+
+          Install:
+
+          \`\`\`bash
+          V=${VERSION}
+          curl -fsSL -O "https://github.com/${GITHUB_REPOSITORY}/releases/download/\$V/${NAME}.tar.gz"
+          sha256sum -c <(curl -fsSL "https://github.com/${GITHUB_REPOSITORY}/releases/download/\$V/checksums.txt")
+          tar xzf "${NAME}.tar.gz"
+          install -m755 blitz-render /usr/local/bin/blitz-render
+          \`\`\`
+
+          Not a browser: renders JS-free HTML/CSS to PNG. Geometry parity against
+          Chromium is measured per release by the \`parity\` workflow.
+          EOF
+          )
+          gh release create "$VERSION" \
+            "dist/${NAME}.tar.gz" \
+            dist/checksums.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$VERSION" \
+            --notes "$NOTES" \
+            --verify-tag
