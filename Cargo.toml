@@ -30,9 +30,13 @@ opt-level = 3
 # Temporary: measure the corpus against the trailing-<br> patch instead of the
 # published crate, so the fixture that found the defect is the fixture that
 # confirms the fix. Removed once the patch lands upstream.
+#
+# blitz-paint is deliberately NOT patched: it is the crate that pulls anyrender
+# from Blitz's git rev, and this spike pins anyrender 0.14 from crates.io, so
+# patching it swaps the PaintScene trait out from under the caller. The fix
+# lives in blitz-dom, which paint depends on, not the other way round.
 [patch.crates-io]
 blitz-html = { git = "https://github.com/leshchenko1979/blitz", branch = "fix/trailing-br-line-box" }
 blitz-dom = { git = "https://github.com/leshchenko1979/blitz", branch = "fix/trailing-br-line-box" }
 blitz-net = { git = "https://github.com/leshchenko1979/blitz", branch = "fix/trailing-br-line-box" }
-blitz-paint = { git = "https://github.com/leshchenko1979/blitz", branch = "fix/trailing-br-line-box" }
 blitz-traits = { git = "https://github.com/leshchenko1979/blitz", branch = "fix/trailing-br-line-box" }
