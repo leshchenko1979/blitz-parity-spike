@@ -1,0 +1,63 @@
+name: drain-probe
+
+# Isolates which part of the drain loop makes sub-resource images arrive.
+#
+# The renderer's drain loop was changed to "four consecutive empty polls + yield
+# + 2 ms sleep" because the loop copied from Blitz's own example
+# (examples/screenshot.rs) rendered documents with missing images. The reason
+# written down at the time — that Provider::is_empty() is racy — does not hold:
+# the waker is cloned in NetProvider::fetch BEFORE spawn, so is_empty() flips as
+# soon as a fetch is queued. Something else is going on, and this job measures
+# what, on one binary, with the loop shape selected by BLITZ_DRAIN.
+#
+# Each mode is run repeatedly: a timing bug is a distribution, not one sample.
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pkg-config libfontconfig1-dev libfreetype6-dev
+
+      - name: Build the Blitz renderer
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build --release 2>&1 | tail -40
+
+      - name: Run the drain probe
+        run: python3 tools/drain_probe.py --bin target/release/render --runs 8
+
+      - name: Upload the built renderer
+        uses: actions/upload-artifact@v4
+        with:
+          name: blitz-render-drain
+          path: target/release/render
+          if-no-files-found: error
+
+      - name: Upload the probe report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drain-probe
+          path: out/drain_probe.json
+          if-no-files-found: warn

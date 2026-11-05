@@ -132,32 +132,50 @@ async fn real_main() {
 
     // Drain any sub-resource fetches, then resolve style and layout.
     //
-    // `Provider::is_empty` counts Arc references to its waker, and the waker is
-    // cloned *inside* the spawned task, i.e. on its first poll. A fetch that has
-    // been queued but not yet polled therefore reads as "empty", so a single
-    // is_empty() check can exit before an image has even started loading: the
-    // paint then happens against a document whose images never arrived. Require
-    // several consecutive empty polls, yielding to the runtime in between, and
-    // bound the wait so a stalled fetch cannot hang the renderer.
+    // BLITZ_DRAIN selects the loop shape so the documented pattern and the one
+    // that actually works can be compared on the SAME binary:
+    //   naive - exactly the loop in examples/screenshot.rs: resolve, then a
+    //           single is_empty() check, no yield
+    //   yield - as naive, but yields to the runtime between iterations
+    //   quiet - four consecutive empty polls, each preceded by a yield and a
+    //           short sleep (the default, and what the shipped build uses)
+    //
+    // The reason `naive` loses images is not settled; see tools/drain_probe.py.
+    let drain_mode = std::env::var("BLITZ_DRAIN").unwrap_or_else(|_| "quiet".to_string());
     let layout_started = Instant::now();
     let deadline = layout_started + std::time::Duration::from_secs(120);
     let mut quiet = 0u32;
     loop {
         document.resolve(0.0);
-        if net.is_empty() {
-            quiet += 1;
-            if quiet >= 4 {
-                break;
+        match drain_mode.as_str() {
+            "naive" => {
+                if net.is_empty() {
+                    break;
+                }
             }
-        } else {
-            quiet = 0;
+            "yield" => {
+                if net.is_empty() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            _ => {
+                if net.is_empty() {
+                    quiet += 1;
+                    if quiet >= 4 {
+                        break;
+                    }
+                } else {
+                    quiet = 0;
+                }
+                tokio::task::yield_now().await;
+                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            }
         }
         if Instant::now() > deadline {
             eprintln!("warning: asset fetch deadline reached, painting anyway");
             break;
         }
-        tokio::task::yield_now().await;
-        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
     }
     let laid_out = layout_started.elapsed();
 
