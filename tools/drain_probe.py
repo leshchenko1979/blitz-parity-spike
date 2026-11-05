@@ -67,7 +67,7 @@ def run_mode(binary, mode, runs):
                     "run": i,
                     "blue": boxes.get("blue"),
                     "green": boxes.get("green"),
-                    "trace": (proc.stderr.strip().splitlines() if trace else None),
+                    "trace": (proc.stderr.strip().splitlines() if i == 0 else None),
                 }
             )
     return results
