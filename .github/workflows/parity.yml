@@ -1,6 +1,7 @@
 name: parity
 
-# Measures Blitz's CSS geometry against Chromium on the ogre parity corpus.
+# Measures Blitz's CSS geometry against Chromium on the parity corpus in
+# fixtures/: both engines render each fixture and one instrument reads both PNGs.
 #
 # The box this spike was written on runs `cargo` as a shim that refuses to
 # compile (host policy), so the build lives here. Everything the job measures is

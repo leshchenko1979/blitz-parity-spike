@@ -1,9 +1,9 @@
 [package]
-name = "blitz-parity-spike"
+name = "blitz-render"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Measure Blitz's CSS geometry against Chromium on the ogre parity corpus"
+description = "Render HTML+CSS to PNG with no browser, via Blitz (Stylo + Taffy + Vello)"
 
 [[bin]]
 name = "render"
