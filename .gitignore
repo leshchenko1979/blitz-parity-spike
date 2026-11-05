@@ -4,3 +4,5 @@ fixtures/deck.html
 
 # CI-built binary staged for release
 bin/
+__pycache__/
+*.pyc
