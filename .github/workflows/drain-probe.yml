@@ -45,7 +45,7 @@ jobs:
           cargo build --release 2>&1 | tail -40
 
       - name: Run the drain probe
-        run: python3 tools/drain_probe.py --bin target/release/render --runs 8
+        run: python3 tools/drain_probe.py --bin target/release/render --runs 8 --show-trace
 
       - name: Upload the built renderer
         uses: actions/upload-artifact@v4

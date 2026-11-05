@@ -145,8 +145,17 @@ async fn real_main() {
     let layout_started = Instant::now();
     let deadline = layout_started + std::time::Duration::from_secs(120);
     let mut quiet = 0u32;
+    let mut pass = 0u32;
+    let trace = std::env::var("BLITZ_TRACE").is_ok();
     loop {
+        if trace {
+            eprintln!("pass {pass}: before resolve count={} empty={}", net.count(), net.is_empty());
+        }
         document.resolve(0.0);
+        if trace {
+            eprintln!("pass {pass}: after  resolve count={} empty={}", net.count(), net.is_empty());
+        }
+        pass += 1;
         match drain_mode.as_str() {
             "naive" => {
                 if net.is_empty() {

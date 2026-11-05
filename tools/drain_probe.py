@@ -38,8 +38,10 @@ EXPECT_GREEN = (0, 0, 40, 40)
 MODES = ["naive", "yield", "quiet"]
 
 
-def render(binary, mode, out_png):
+def render(binary, mode, out_png, trace=False):
     env = dict(os.environ, BLITZ_DRAIN=mode)
+    if trace:
+        env["BLITZ_TRACE"] = "1"
     proc = subprocess.run(
         [binary, FIXTURE, out_png, "200", "120", "1", "--document"],
         env=env,
@@ -55,7 +57,7 @@ def run_mode(binary, mode, runs):
     with tempfile.TemporaryDirectory() as tmp:
         for i in range(runs):
             out = os.path.join(tmp, f"{mode}-{i}.png")
-            proc = render(binary, mode, out)
+            proc = render(binary, mode, out, trace=(i == 0))
             if proc.returncode != 0 or not os.path.exists(out):
                 results.append({"run": i, "error": proc.stderr.strip()[-400:]})
                 continue
@@ -65,6 +67,7 @@ def run_mode(binary, mode, runs):
                     "run": i,
                     "blue": boxes.get("blue"),
                     "green": boxes.get("green"),
+                    "trace": (proc.stderr.strip().splitlines() if trace else None),
                 }
             )
     return results
@@ -97,6 +100,8 @@ def main():
     ap.add_argument("--bin", required=True)
     ap.add_argument("--runs", type=int, default=8)
     ap.add_argument("--out", default="out/drain_probe.json")
+    ap.add_argument("--show-trace", action="store_true",
+                    help="print the resolve-pass trace for the first run of each mode")
     args = ap.parse_args()
 
     binary = os.path.abspath(args.bin)
@@ -118,6 +123,13 @@ def main():
         )
         if s["first_error"]:
             print(f"        first error: {s['first_error'][:200]}", flush=True)
+        if args.show_trace:
+            for r in results:
+                if r.get("trace"):
+                    print(f"        trace ({mode} run 0):", flush=True)
+                    for line in r["trace"]:
+                        print(f"          {line}", flush=True)
+                    break
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as f:
