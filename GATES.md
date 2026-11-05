@@ -96,12 +96,16 @@ offsets.
 
 Each of these cost real time, and none of them raises an error.
 
-1. **The drain loop needs to yield.** The loop in `examples/screenshot.rs` is
-   `resolve()` then one `is_empty()` check. `resolve()` is synchronous, so on a
-   current-thread tokio runtime the spawned fetch task is never polled and every
-   `<img>` is missing. One `tokio::task::yield_now().await` per iteration fixes
-   it. `is_empty()` itself is *not* racy: `fetch()` clones the waker before
-   `spawn()`, so the count is correct the moment a fetch is queued.
+1. **The drain loop can exit before the image is ingested.** The loop in
+   `examples/screenshot.rs` breaks on `net.is_empty()`, which reports the
+   *provider's* waker count — but the loaded asset arrives on the *document's*
+   message channel, and `resolve()` is the only thing that drains it. So the loop
+   can break with the image fetched and still queued: measured **0/8** images on
+   both runtime flavours. One trailing `resolve(0.0)` after the loop gives
+   **8/8** (that is why `examples/paint_bench.rs` survives — it has one and
+   `screenshot.rs` does not). `yield_now()` is *not* the fix: it rescues the
+   current-thread case only and reads 0/8 on multi-thread. `is_empty()` itself is
+   not racy: `fetch()` clones the waker before `spawn()`. Upstream #1419.
 2. **`--clip` mixes two coordinate systems.** `get_client_bounding_rect()` and
    painter node coordinates are **CSS** px; the canvas and the PNG are
    **physical** px. Feed CSS px to the painter and the offsets are right but the
