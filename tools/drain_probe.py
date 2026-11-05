@@ -40,7 +40,9 @@ EXPECT_GREEN = (0, 0, 40, 40)
 MODES = [
     ("naive", "current"),
     ("naive", "multi"),
+    ("naive2", "multi"),
     ("yield", "current"),
+    ("yield", "multi"),
     ("quiet", "current"),
 ]
 

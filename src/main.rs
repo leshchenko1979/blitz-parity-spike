@@ -146,13 +146,16 @@ async fn real_main() {
     //
     // BLITZ_DRAIN selects the loop shape so the documented pattern and the one
     // that actually works can be compared on the SAME binary:
-    //   naive - exactly the loop in examples/screenshot.rs: resolve, then a
-    //           single is_empty() check, no yield
-    //   yield - as naive, but yields to the runtime between iterations
-    //   quiet - four consecutive empty polls, each preceded by a yield and a
-    //           short sleep (the default, and what the shipped build uses)
+    //   naive  - exactly the loop in examples/screenshot.rs: resolve, then a
+    //            single is_empty() check, no yield
+    //   naive2 - as naive, plus the trailing resolve that paint_bench.rs has
+    //            and screenshot.rs lacks
+    //   yield  - as naive, but yields to the runtime between iterations
+    //   quiet  - four consecutive empty polls, each preceded by a yield and a
+    //            short sleep (the default, and what the shipped build uses)
     //
-    // The reason `naive` loses images is not settled; see tools/drain_probe.py.
+    // `naive` loses images on BOTH runtime flavours, for opposite reasons; see
+    // tools/drain_probe.py for the measured table.
     let drain_mode = std::env::var("BLITZ_DRAIN").unwrap_or_else(|_| "quiet".to_string());
     let layout_started = Instant::now();
     let deadline_secs: u64 = std::env::var("BLITZ_DEADLINE_SECS")
@@ -173,7 +176,7 @@ async fn real_main() {
         }
         pass += 1;
         match drain_mode.as_str() {
-            "naive" => {
+            "naive" | "naive2" => {
                 if net.is_empty() {
                     break;
                 }
@@ -204,6 +207,11 @@ async fn real_main() {
     }
     if trace && pass >= TRACE_PASSES {
         eprintln!("(trace capped at {TRACE_PASSES} passes; loop ran {pass})");
+    }
+    // naive2: examples/paint_bench.rs resolves once more after its drain loop
+    // than examples/screenshot.rs does. Tested rather than assumed.
+    if drain_mode == "naive2" {
+        document.resolve(0.0);
     }
     let laid_out = layout_started.elapsed();
 
