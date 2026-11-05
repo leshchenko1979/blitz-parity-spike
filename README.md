@@ -64,6 +64,13 @@ the peak memory.
 blitz-render --clip deck.html slides/ 1280 720 2 'section.slide' --document --scroll
 ```
 
+Clip mode writes `clip_NN.png` into the output directory (one per match, in
+document order) and prints each match's CSS box and physical size:
+
+```
+clip_01 css x=0.00 y=0.00 w=1280.00 h=720.00  physical 2560x1440 (scroll)
+```
+
 ## Fidelity
 
 Measured against Chromium 151 on the same document, same viewport, same scale —
