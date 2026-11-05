@@ -31,12 +31,24 @@ use blitz_traits::shell::{ColorScheme, Viewport};
 use peniko::kurbo::Rect;
 use peniko::Fill;
 
+/// Trace output is capped: an unbounded naive drain loop once wrote 1.12 GB.
+const TRACE_PASSES: u32 = 8;
+
 fn main() {
     // The net provider spawns a tokio task for every sub-resource fetch, so the
     // document has to be driven from inside a runtime. Without this, any
     // document with an <img> aborts with `there is no reactor running` before
     // layout starts.
-    tokio::runtime::Builder::new_current_thread()
+    // BLITZ_RUNTIME selects the tokio flavour. `current` is what the shipped
+    // CLI uses (cheaper, deterministic); `multi` reproduces the regime of
+    // upstream's examples/screenshot.rs, which is `#[tokio::main]`.
+    let multi = std::env::var("BLITZ_RUNTIME").as_deref() == Ok("multi");
+    let mut builder = if multi {
+        tokio::runtime::Builder::new_multi_thread()
+    } else {
+        tokio::runtime::Builder::new_current_thread()
+    };
+    builder
         .enable_all()
         .build()
         .expect("tokio runtime")
@@ -143,16 +155,20 @@ async fn real_main() {
     // The reason `naive` loses images is not settled; see tools/drain_probe.py.
     let drain_mode = std::env::var("BLITZ_DRAIN").unwrap_or_else(|_| "quiet".to_string());
     let layout_started = Instant::now();
-    let deadline = layout_started + std::time::Duration::from_secs(120);
+    let deadline_secs: u64 = std::env::var("BLITZ_DEADLINE_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(120);
+    let deadline = layout_started + std::time::Duration::from_secs(deadline_secs);
     let mut quiet = 0u32;
     let mut pass = 0u32;
     let trace = std::env::var("BLITZ_TRACE").is_ok();
     loop {
-        if trace {
+        if trace && pass < TRACE_PASSES {
             eprintln!("pass {pass}: before resolve count={} empty={}", net.count(), net.is_empty());
         }
         document.resolve(0.0);
-        if trace {
+        if trace && pass < TRACE_PASSES {
             eprintln!("pass {pass}: after  resolve count={} empty={}", net.count(), net.is_empty());
         }
         pass += 1;
@@ -185,6 +201,9 @@ async fn real_main() {
             eprintln!("warning: asset fetch deadline reached, painting anyway");
             break;
         }
+    }
+    if trace && pass >= TRACE_PASSES {
+        eprintln!("(trace capped at {TRACE_PASSES} passes; loop ran {pass})");
     }
     let laid_out = layout_started.elapsed();
 

@@ -35,11 +35,22 @@ FIXTURE = os.path.join(HERE, "fixtures", "image-data-uri.html")
 EXPECT_BLUE = (20, 10, 60, 30)
 EXPECT_GREEN = (0, 0, 40, 40)
 
-MODES = ["naive", "yield", "quiet"]
+# (drain loop shape, tokio runtime). Upstream's examples/screenshot.rs is
+# `#[tokio::main]`, i.e. multi-thread; the shipped CLI is current-thread.
+MODES = [
+    ("naive", "current"),
+    ("naive", "multi"),
+    ("yield", "current"),
+    ("quiet", "current"),
+]
+
+# Keep a starved naive loop cheap: it spins until this deadline.
+DEADLINE_SECS = "15"
 
 
-def render(binary, mode, out_png, trace=False):
-    env = dict(os.environ, BLITZ_DRAIN=mode)
+def render(binary, mode, runtime, out_png, trace=False):
+    env = dict(os.environ, BLITZ_DRAIN=mode, BLITZ_RUNTIME=runtime,
+               BLITZ_DEADLINE_SECS=DEADLINE_SECS)
     if trace:
         env["BLITZ_TRACE"] = "1"
     proc = subprocess.run(
@@ -47,17 +58,17 @@ def render(binary, mode, out_png, trace=False):
         env=env,
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=90,
     )
     return proc
 
 
-def run_mode(binary, mode, runs):
+def run_mode(binary, mode, runtime, runs):
     results = []
     with tempfile.TemporaryDirectory() as tmp:
         for i in range(runs):
             out = os.path.join(tmp, f"{mode}-{i}.png")
-            proc = render(binary, mode, out, trace=(i == 0))
+            proc = render(binary, mode, runtime, out, trace=(i == 0))
             if proc.returncode != 0 or not os.path.exists(out):
                 results.append({"run": i, "error": proc.stderr.strip()[-400:]})
                 continue
@@ -73,7 +84,7 @@ def run_mode(binary, mode, runs):
     return results
 
 
-def summarise(mode, results):
+def summarise(label, results):
     ok = [r for r in results if "error" not in r]
     errors = [r for r in results if "error" in r]
     image_ok = [r for r in ok if r["blue"] == EXPECT_BLUE]
@@ -84,7 +95,7 @@ def summarise(mode, results):
         "missing" if r["blue"] is None else str(r["blue"]) for r in ok
     )
     return {
-        "mode": mode,
+        "mode": label,
         "runs": len(results),
         "errors": len(errors),
         "image_ok": len(image_ok),
@@ -109,13 +120,14 @@ def main():
         sys.exit(f"{binary}: not executable")
 
     report = []
-    for mode in MODES:
-        results = run_mode(binary, mode, args.runs)
-        summary = summarise(mode, results)
+    for mode, runtime in MODES:
+        label = f"{mode}/{runtime}"
+        results = run_mode(binary, mode, runtime, args.runs)
+        summary = summarise(label, results)
         report.append({"summary": summary, "runs": results})
         s = summary
         print(
-            f"{mode:6s}  image {s['image_ok']}/{s['runs']}  "
+            f"{label:15s}  image {s['image_ok']}/{s['runs']}  "
             f"page {s['page_ok']}/{s['runs']}  "
             f"missing {s['image_missing']}  errors {s['errors']}  "
             f"shapes {s['blue_shapes']}",
@@ -126,7 +138,7 @@ def main():
         if args.show_trace:
             for r in results:
                 if r.get("trace"):
-                    print(f"        trace ({mode} run 0):", flush=True)
+                    print(f"        trace ({label} run 0):", flush=True)
                     for line in r["trace"]:
                         print(f"          {line}", flush=True)
                     break
