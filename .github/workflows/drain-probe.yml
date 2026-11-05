@@ -50,7 +50,7 @@ jobs:
       - name: Upload the built renderer
         uses: actions/upload-artifact@v4
         with:
-          name: blitz-render-drain
+          name: html-render-drain
           path: target/release/render
           if-no-files-found: error
 

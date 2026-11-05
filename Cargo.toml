@@ -1,8 +1,9 @@
 [package]
-name = "blitz-render"
-version = "0.1.0"
+name = "html-render"
+version = "0.3.0-beta.4"
 edition = "2021"
 publish = false
+license = "Apache-2.0"
 description = "Render HTML+CSS to PNG with no browser, via Blitz (Stylo + Taffy + Vello)"
 
 [[bin]]

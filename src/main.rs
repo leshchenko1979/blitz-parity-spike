@@ -146,16 +146,19 @@ async fn real_main() {
     //
     // BLITZ_DRAIN selects the loop shape so the documented pattern and the one
     // that actually works can be compared on the SAME binary:
-    //   naive  - exactly the loop in examples/screenshot.rs: resolve, then a
-    //            single is_empty() check, no yield
-    //   naive2 - as naive, plus the trailing resolve that paint_bench.rs has
-    //            and screenshot.rs lacks
+    //   naive  - the loop body from examples/screenshot.rs WITHOUT its trailing
+    //            resolve: resolve, then a single is_empty() check, no yield
+    //   naive2 - the same loop plus that trailing resolve, i.e. what both
+    //            upstream examples actually ship (screenshot.rs:98,
+    //            paint_bench.rs:111)
     //   yield  - as naive, but yields to the runtime between iterations
     //   quiet  - four consecutive empty polls, each preceded by a yield and a
     //            short sleep (the default, and what the shipped build uses)
     //
     // `naive` loses images on BOTH runtime flavours, for opposite reasons; see
-    // tools/drain_probe.py for the measured table.
+    // tools/drain_probe.py for the measured table. `yield_now()` alone does not
+    // fix it: the loop can exit with the asset delivered to the document's
+    // channel and not yet ingested, and only resolve() drains that channel.
     let drain_mode = std::env::var("BLITZ_DRAIN").unwrap_or_else(|_| "quiet".to_string());
     let layout_started = Instant::now();
     let deadline_secs: u64 = std::env::var("BLITZ_DEADLINE_SECS")
@@ -208,9 +211,18 @@ async fn real_main() {
     if trace && pass >= TRACE_PASSES {
         eprintln!("(trace capped at {TRACE_PASSES} passes; loop ran {pass})");
     }
-    // naive2: examples/paint_bench.rs resolves once more after its drain loop
-    // than examples/screenshot.rs does. Tested rather than assumed.
-    if drain_mode == "naive2" {
+    // One trailing resolve, for the shipped loop and for naive2.
+    //
+    // resolve() is the only thing that drains the document's resource channel:
+    // it starts with handle_messages(), which try_recv()s the loaded asset and
+    // applies it. is_empty() reports the PROVIDER's waker Arc count, a different
+    // queue, so the loop can break with the image fetched and delivered but not
+    // yet ingested. Both upstream examples do this (screenshot.rs:98,
+    // paint_bench.rs:111) — measured, not assumed.
+    //
+    // `naive` and `yield` deliberately stay unpatched so tools/drain_probe.py
+    // keeps reproducing the broken table.
+    if drain_mode != "naive" && drain_mode != "yield" {
         document.resolve(0.0);
     }
     let laid_out = layout_started.elapsed();

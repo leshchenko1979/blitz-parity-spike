@@ -1,4 +1,4 @@
-# blitz-render
+# html-render
 
 **HTML + CSS → PNG, with no browser.**
 
@@ -12,25 +12,25 @@ browser for server-side rendering? On a real 12-slide, 4 MB deck, yes:
 | 12-slide deck, 2560×1440 | wall | peak RSS |
 |---|---|---|
 | headless Chromium (Playwright) | 13.36 s | 858 MiB |
-| **blitz-render** | **5.56 s** | **95 MiB** |
+| **html-render** | **5.56 s** | **95 MiB** |
 
 **2.4× faster, 9× lighter** — and byte-for-byte deterministic, which a browser is
 not: ten renders of the same input produce one md5, so output can be diffed in CI.
 
 ## Install
 
-Linux x86_64, glibc ≥ 2.35. From a [release](https://github.com/leshchenko1979/blitz-render/releases):
+Linux x86_64, glibc ≥ 2.35. From a [release](https://github.com/leshchenko1979/html-render/releases):
 
 ```bash
-V=v0.3.0-beta.4-r1
-N=blitz-render_0.3.0-beta.4-r1_linux_amd64
-BASE="https://github.com/leshchenko1979/blitz-render/releases/download/$V"
+V=v0.3.0-beta.4-r2
+N=html-render_0.3.0-beta.4-r2_linux_amd64
+BASE="https://github.com/leshchenko1979/html-render/releases/download/$V"
 
 curl -fsSL -O "$BASE/$N.tar.gz"
 curl -fsSL -O "$BASE/checksums.txt"
 sha256sum -c checksums.txt
 tar xzf "$N.tar.gz"
-install -m755 blitz-render /usr/local/bin/blitz-render
+install -m755 html-render /usr/local/bin/html-render
 ```
 
 Every release verifies its own asset: the workflow downloads the published
@@ -45,10 +45,10 @@ output resolution (scale 2 → a 1280×720 viewport produces 2560×1440).
 
 ```bash
 # one image
-blitz-render page.html out.png 1280 720 [scale] [--document]
+html-render page.html out.png 1280 720 [scale] [--document]
 
 # one PNG per element matching a selector
-blitz-render --clip deck.html png/ 1280 720 2 'section.slide' [--document] [--scroll]
+html-render --clip deck.html png/ 1280 720 2 'section.slide' [--document] [--scroll]
 ```
 
 `--document` renders a complete HTML file as-is. **Use it for real documents**:
@@ -61,7 +61,7 @@ the peak memory.
 
 ```bash
 # a 12-slide deck, 2560×1440 per slide, ~95 MiB peak
-blitz-render --clip deck.html slides/ 1280 720 2 'section.slide' --document --scroll
+html-render --clip deck.html slides/ 1280 720 2 'section.slide' --document --scroll
 ```
 
 Clip mode writes `clip_NN.png` into the output directory (one per match, in
@@ -86,7 +86,7 @@ between two engines rather than between two rulers.
 
 The residual is antialiasing, not layout: wrap points match, tables match, boxes
 sit at Chromium's coordinates, and images are sampled at zero offset. Vello's
-glyph AA is slightly softer than Skia's, so **you cannot diff blitz-render
+glyph AA is slightly softer than Skia's, so **you cannot diff html-render
 against Chromium at 99 %** — and you don't need to, because against *itself* it
 is exact.
 
@@ -156,5 +156,4 @@ identical embedded font they measure font availability rather than layout.
 
 ## Licence
 
-Not yet chosen. Until one is added, default copyright applies and the code is not
-free to reuse — which defeats the purpose of publishing it.
+Apache-2.0. Same licence as Blitz itself, and it carries an explicit patent grant.

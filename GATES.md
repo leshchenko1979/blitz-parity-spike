@@ -1,6 +1,6 @@
 # Gates
 
-The three gates that decide whether `blitz-render` can stand in for a browser
+The three gates that decide whether `html-render` can stand in for a browser
 for static slide rendering. All numbers below were measured on one 4 vCPU Linux
 host (glibc 2.39) with Blitz `0.3.0-beta.4` and Chromium 151, and all of them
 are reproducible with `tools/gates.py` in this repo.
@@ -71,7 +71,7 @@ The 4.13 % is antialiasing and image resampling, not layout:
   at scale 2 they read 0.3-3.9 % off, which is the 2x upscale filter rather
   than a displacement, since the shift stays 0 px.
 
-So `blitz-render` will never match Chromium at 99 % of pixels, and that is not
+So `html-render` will never match Chromium at 99 % of pixels, and that is not
 the useful target: determinism means it can be diffed against **itself**
 byte-exactly, which is what a CI gate needs.
 

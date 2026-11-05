@@ -4,7 +4,7 @@ name: release
 # installs from a versioned URL with a checksum instead of a CI artifact that
 # expires and cannot be verified by anyone else.
 #
-#   curl -fsSL -O https://github.com/leshchenko1979/blitz-render/releases/download/vX/blitz-render_X_linux_amd64.tar.gz
+#   curl -fsSL -O https://github.com/leshchenko1979/html-render/releases/download/vX/html-render_X_linux_amd64.tar.gz
 #
 # Triggered by a version tag only: the artifact is a binary, and a binary that
 # silently changes under a fixed URL is not pinnable.
@@ -71,11 +71,11 @@ jobs:
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
           [ -n "$VERSION" ] || { echo "::error::no tag"; exit 1; }
-          NAME="blitz-render_${VERSION#v}_linux_amd64"
+          NAME="html-render_${VERSION#v}_linux_amd64"
           mkdir -p dist
-          cp target/release/render dist/blitz-render
-          chmod 755 dist/blitz-render
-          tar -C dist -czf "dist/${NAME}.tar.gz" blitz-render
+          cp target/release/render dist/html-render
+          chmod 755 dist/html-render
+          tar -C dist -czf "dist/${NAME}.tar.gz" html-render
           # The tarball is what gets downloaded, so the checksum is of the tarball.
           ( cd dist && sha256sum "${NAME}.tar.gz" > checksums.txt )
           cat dist/checksums.txt
@@ -95,7 +95,7 @@ jobs:
           | | |
           |---|---|
           | Asset | \`${NAME}.tar.gz\` |
-          | Binary | \`blitz-render\` (single file, no runtime deps) |
+          | Binary | \`html-render\` (single file, no runtime deps) |
           | glibc floor | 2.35 (asserted at build time) |
           | Built on | ubuntu-22.04 |
           | Blitz pin | see \`Cargo.toml\` at this tag |
@@ -107,7 +107,7 @@ jobs:
           curl -fsSL -O "https://github.com/${GITHUB_REPOSITORY}/releases/download/\$V/${NAME}.tar.gz"
           sha256sum -c <(curl -fsSL "https://github.com/${GITHUB_REPOSITORY}/releases/download/\$V/checksums.txt")
           tar xzf "${NAME}.tar.gz"
-          install -m755 blitz-render /usr/local/bin/blitz-render
+          install -m755 html-render /usr/local/bin/html-render
           \`\`\`
 
           Not a browser: renders JS-free HTML/CSS to PNG.
@@ -142,17 +142,17 @@ jobs:
           curl -fsSL -O "$BASE/checksums.txt"
           sha256sum -c checksums.txt
           tar xzf "${NAME}.tar.gz"
-          BUILT=$(md5sum "../dist/blitz-render" | cut -d' ' -f1)
-          FETCHED=$(md5sum blitz-render | cut -d' ' -f1)
+          BUILT=$(md5sum "../dist/html-render" | cut -d' ' -f1)
+          FETCHED=$(md5sum html-render | cut -d' ' -f1)
           echo "built:   $BUILT"
           echo "fetched: $FETCHED"
           [ "$BUILT" = "$FETCHED" ] || { echo "::error::published asset differs from the build"; exit 1; }
           # `--help` is not a flag: the CLI prints usage and exits 2, which
           # `pipefail` would turn into a failed step. The render below is the
           # real liveness check, so tolerate the usage exit.
-          ./blitz-render --help 2>&1 | head -3 || true
+          ./html-render --help 2>&1 | head -3 || true
           printf '<html><body style="margin:0"><div style="width:20px;height:10px;background:#f00"></div></body></html>' > t.html
-          ./blitz-render t.html t.png 20 10 1 --document
+          ./html-render t.html t.png 20 10 1 --document
           # Assert the IHDR dimensions, not a file-size floor: a 20x10 solid
           # colour legitimately compresses to 93 bytes.
           python3 -c "import struct;d=open('t.png','rb').read();assert d[:8]==b'\x89PNG\r\n\x1a\n','not a PNG';w,h=struct.unpack('>II',d[16:24]);assert (w,h)==(20,10),(w,h);print('renders: ok',w,'x',h,len(d),'bytes')"
